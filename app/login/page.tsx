@@ -54,16 +54,8 @@ export default function LoginPage() {
     }
   }, [])
 
-  // Auto-redirect if already logged in with valid token
-  useEffect(() => {
-    const checkExistingSession = async () => {
-      const tokenValid = await isTokenValid()
-      if (tokenValid) {
-        router.push("/app/dashboard")
-      }
-    }
-    checkExistingSession()
-  }, [router])
+  // Note: We don't auto-redirect here to prevent redirect loops
+  // User must explicitly login even if they have a cached session
 
   const handleOnlineLogin = async () => {
     const response = await fetch("/api/auth/login", {

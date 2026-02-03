@@ -29,8 +29,34 @@ export default function ClientLayout({
   // Offline-capable user fetch
   const fetchUser = useCallback(async () => {
     try {
+      // First check IndexedDB for cached auth (faster)
+      const cachedAuth = await getAuthLocal()
+      const tokenValid = await isTokenValid()
+      
+      if (tokenValid && cachedAuth) {
+        setUser(cachedAuth.user)
+        setLoading(false)
+        
+        // If online, verify with server in background
+        if (navigator.onLine) {
+          try {
+            const res = await fetch("/api/auth/me", {
+              credentials: "include",
+            })
+            if (res.ok) {
+              const data = await res.json()
+              // Update user with fresh data from server
+              setUser(data.user)
+            }
+          } catch {
+            // Server error, keep using cached data
+          }
+        }
+        return
+      }
+      
+      // No cached auth, try server if online
       if (navigator.onLine) {
-        // Try online fetch first
         try {
           const res = await fetch("/api/auth/me", {
             credentials: "include",
@@ -43,27 +69,17 @@ export default function ClientLayout({
             return
           }
         } catch {
-          // Network error, fall through to offline check
+          // Network error
         }
       }
       
-      // Offline or online fetch failed - check IndexedDB
-      const tokenValid = await isTokenValid()
-      const cachedAuth = await getAuthLocal()
-      
-      if (tokenValid && cachedAuth) {
-        setUser(cachedAuth.user)
-        setLoading(false)
-        return
-      }
-      
-      // No valid session
-      router.push("/login")
+      // No valid session - redirect to login
+      setLoading(false)
+      router.replace("/login")
     } catch (error) {
       console.error("Auth check error:", error)
-      router.push("/login")
-    } finally {
       setLoading(false)
+      router.replace("/login")
     }
   }, [router])
 
@@ -172,7 +188,7 @@ export default function ClientLayout({
           <div className="text-sm">
             <p className="text-neutral-400">User</p>
             <p className="text-white font-medium">
-              {user?.namaLengkap || "User"}
+              {user?.nama_lengkap || user?.namaLengkap || "User"}
             </p>
             <p className="text-xs text-neutral-400">
               {user?.role}
