@@ -281,6 +281,25 @@ export default function LoginPage() {
                 <p className="text-xs text-text-secondary">Password: admin123</p>
               </div>
             </div>
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  const res = await fetch("/api/seed")
+                  const data = await res.json()
+                  if (data.success) {
+                    alert("Demo users berhasil dibuat! Silakan login dengan kredensial di atas.")
+                  } else {
+                    alert("Error: " + (data.error || "Gagal membuat demo users"))
+                  }
+                } catch (err) {
+                  alert("Error: Gagal terhubung ke server")
+                }
+              }}
+              className="mt-3 w-full text-xs bg-blue-100 text-blue-700 py-2 rounded hover:bg-blue-200 transition"
+            >
+              Buat Demo Users (Klik jika pertama kali)
+            </button>
           </div>
         </div>
       </div>
