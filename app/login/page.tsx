@@ -277,7 +277,8 @@ export default function LoginPage() {
               type="button"
               onClick={async () => {
                 try {
-                  const res = await fetch("/api/seed")
+                  // Force recreate to fix any field name issues
+                  const res = await fetch("/api/seed?force=true")
                   const data = await res.json()
                   if (data.success) {
                     alert("Demo users berhasil dibuat! Silakan login dengan kredensial di atas.")
@@ -285,12 +286,12 @@ export default function LoginPage() {
                     alert("Error: " + (data.error || "Gagal membuat demo users"))
                   }
                 } catch (err) {
-                  alert("Error: Gagal terhubung ke server")
+                  alert("Error: Gagal terhubung ke server. Pastikan MONGODB_URI dan MONGODB_DB sudah diatur dengan benar.")
                 }
               }}
               className="mt-3 w-full text-xs bg-blue-100 text-blue-700 py-2 rounded hover:bg-blue-200 transition"
             >
-              Buat Demo Users (Klik jika pertama kali)
+              Buat/Reset Demo Users
             </button>
           </div>
         </div>

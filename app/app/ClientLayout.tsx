@@ -29,55 +29,65 @@ export default function ClientLayout({
   // Offline-capable user fetch
   const fetchUser = useCallback(async () => {
     try {
+      console.log("[v0] fetchUser called")
+      
       // First check IndexedDB for cached auth (faster)
       const cachedAuth = await getAuthLocal()
       const tokenValid = await isTokenValid()
       
+      console.log("[v0] Cached auth:", cachedAuth ? "found" : "not found")
+      console.log("[v0] Token valid:", tokenValid)
+      
       if (tokenValid && cachedAuth) {
+        console.log("[v0] Using cached auth, user:", cachedAuth.user)
         setUser(cachedAuth.user)
         setLoading(false)
         
-        // If online, verify with server in background
+        // If online, verify with server in background (don't redirect on failure)
         if (navigator.onLine) {
-          try {
-            const res = await fetch("/api/auth/me", {
-              credentials: "include",
+          fetch("/api/auth/me", { credentials: "include" })
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+              if (data?.user) {
+                console.log("[v0] Server verified, updating user:", data.user)
+                setUser(data.user)
+              }
             })
-            if (res.ok) {
-              const data = await res.json()
-              // Update user with fresh data from server
-              setUser(data.user)
-            }
-          } catch {
-            // Server error, keep using cached data
-          }
+            .catch(() => {
+              console.log("[v0] Server verification failed, keeping cached data")
+            })
         }
         return
       }
       
       // No cached auth, try server if online
       if (navigator.onLine) {
+        console.log("[v0] No cached auth, trying server...")
         try {
           const res = await fetch("/api/auth/me", {
             credentials: "include",
           })
 
+          console.log("[v0] Server response status:", res.status)
+          
           if (res.ok) {
             const data = await res.json()
+            console.log("[v0] Server returned user:", data.user)
             setUser(data.user)
             setLoading(false)
             return
           }
-        } catch {
-          // Network error
+        } catch (err) {
+          console.log("[v0] Network error:", err)
         }
       }
       
       // No valid session - redirect to login
+      console.log("[v0] No valid session, redirecting to login")
       setLoading(false)
       router.replace("/login")
     } catch (error) {
-      console.error("Auth check error:", error)
+      console.error("[v0] Auth check error:", error)
       setLoading(false)
       router.replace("/login")
     }
