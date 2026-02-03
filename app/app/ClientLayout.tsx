@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { useServiceWorker } from "@/hooks/use-service-worker"
@@ -9,6 +9,7 @@ import { useOfflineSync } from "@/hooks/use-offline-sync"
 import { useSyncNotifications } from "@/hooks/use-sync-notifications"
 import ConnectivityIndicator from "@/components/connectivity-indicator"
 import SyncToast from "@/components/sync-toast"
+import { getAuthLocal, isTokenValid, clearAuthLocal } from "@/lib/local-db"
 
 export default function ClientLayout({
   children,
@@ -25,36 +26,63 @@ export default function ClientLayout({
 
   const { isOnline, pendingChanges, syncing } = useOfflineSync()
 
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const res = await fetch("/api/auth/me", {
-          credentials: "include",
-        })
+  // Offline-capable user fetch
+  const fetchUser = useCallback(async () => {
+    try {
+      if (navigator.onLine) {
+        // Try online fetch first
+        try {
+          const res = await fetch("/api/auth/me", {
+            credentials: "include",
+          })
 
-        if (!res.ok) {
-          router.push("/login")
-          return
+          if (res.ok) {
+            const data = await res.json()
+            setUser(data.user)
+            setLoading(false)
+            return
+          }
+        } catch {
+          // Network error, fall through to offline check
         }
-
-        const data = await res.json()
-        setUser(data.user)
-      } catch (error) {
-        router.push("/login")
-      } finally {
-        setLoading(false)
       }
+      
+      // Offline or online fetch failed - check IndexedDB
+      const tokenValid = await isTokenValid()
+      const cachedAuth = await getAuthLocal()
+      
+      if (tokenValid && cachedAuth) {
+        setUser(cachedAuth.user)
+        setLoading(false)
+        return
+      }
+      
+      // No valid session
+      router.push("/login")
+    } catch (error) {
+      console.error("Auth check error:", error)
+      router.push("/login")
+    } finally {
+      setLoading(false)
     }
-
-    fetchUser()
   }, [router])
+
+  useEffect(() => {
+    fetchUser()
+  }, [fetchUser])
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-      })
+      // Clear IndexedDB auth data
+      await clearAuthLocal()
+      localStorage.removeItem("user")
+      
+      if (navigator.onLine) {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          credentials: "include",
+        })
+      }
     } catch (error) {
       console.error("Logout error:", error)
     } finally {

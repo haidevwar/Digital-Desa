@@ -5,11 +5,21 @@ export interface ConnectionStatus {
   retryCount: number
 }
 
+export interface OfflineChange {
+  table: string
+  action: "CREATE" | "UPDATE" | "DELETE"
+  data: any
+  timestamp: Date
+}
+
 type StatusListener = (status: ConnectionStatus) => void
 
 class OfflineManager {
   private status: ConnectionStatus
   private listeners: StatusListener[] = []
+  private retryTimeout: NodeJS.Timeout | null = null
+  private maxRetries = 5
+  private baseDelay = 1000
 
   constructor() {
     this.status = {
@@ -34,7 +44,18 @@ class OfflineManager {
       lastOnlineTime: new Date(),
     }
 
+    // Clear any pending retries
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout)
+      this.retryTimeout = null
+    }
+
     this.notify()
+    
+    // Trigger sync ready event when coming back online
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("online-sync-ready"))
+    }
   }
 
   private handleOffline = () => {
@@ -52,23 +73,57 @@ class OfflineManager {
     this.listeners.forEach((listener) => listener(this.status))
   }
 
-  // Dipakai ConnectivityIndicator
+  // Get current connection status
   getConnectionStatus(): ConnectionStatus {
     return this.status
   }
 
-  // Dipakai useOfflineSync
+  // Check if application is online
   isApplicationOnline(): boolean {
     return this.status.isOnline
   }
 
-  // Dipakai SyncToast & ConnectivityIndicator
+  // Subscribe to status changes
   onStatusChange(callback: StatusListener) {
     this.listeners.push(callback)
 
     return () => {
       this.listeners = this.listeners.filter((l) => l !== callback)
     }
+  }
+
+  // Retry sync with exponential backoff
+  retrySyncWithBackoff() {
+    if (!this.status.isOnline) return
+    if (this.status.retryCount >= this.maxRetries) {
+      console.log("Max retries reached")
+      return
+    }
+
+    const delay = this.baseDelay * Math.pow(2, this.status.retryCount)
+    
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout)
+    }
+
+    this.retryTimeout = setTimeout(() => {
+      if (this.status.isOnline) {
+        window.dispatchEvent(new CustomEvent("retry-sync"))
+      }
+    }, delay)
+
+    this.status.retryCount++
+    this.notify()
+  }
+
+  // Reset retry count
+  resetRetryCount() {
+    this.status.retryCount = 0
+    if (this.retryTimeout) {
+      clearTimeout(this.retryTimeout)
+      this.retryTimeout = null
+    }
+    this.notify()
   }
 }
 

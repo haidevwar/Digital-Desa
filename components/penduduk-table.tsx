@@ -3,7 +3,10 @@
 import { useState } from "react"
 
 interface Penduduk {
-  _id: string
+  _id?: string
+  id?: number
+  local_id?: number
+  server_id?: string
   nik: string
   nama: string
   tanggal_lahir: string
@@ -18,8 +21,8 @@ interface Penduduk {
 interface Props {
   penduduk: Penduduk[]
   loading: boolean
-  onEdit: (id: string) => void
-  onDelete: () => void
+  onEdit: (id: number) => void
+  onDelete: (id: number) => void
 }
 
 export default function PendudukTable({
@@ -34,7 +37,10 @@ export default function PendudukTable({
   const startIdx = (page - 1) * itemsPerPage
   const paginatedData = penduduk.slice(startIdx, startIdx + itemsPerPage)
 
-  const getSyncFlagColor = (flag: string) => {
+  const getSyncFlagColor = (flag: string, isSynced: boolean) => {
+    if (isSynced) {
+      return "bg-green-100 text-green-800"
+    }
     switch (flag) {
       case "CREATE":
         return "bg-blue-100 text-blue-800"
@@ -49,25 +55,26 @@ export default function PendudukTable({
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const getSyncLabel = (flag: string, isSynced: boolean) => {
+    if (isSynced) return "Tersinkron"
+    switch (flag) {
+      case "CREATE":
+        return "Baru (Lokal)"
+      case "UPDATE":
+        return "Diubah (Lokal)"
+      case "DELETE":
+        return "Dihapus (Lokal)"
+      default:
+        return flag || "Pending"
+    }
+  }
+
+  const handleDelete = async (p: Penduduk) => {
     if (!confirm("Yakin ingin menghapus data ini?")) return
-
-    try {
-      const response = await fetch(`/api/penduduk/${id}`, {
-        method: "DELETE",
-        credentials: "include", // WAJIB untuk cookie auth
-      })
-
-      if (response.ok) {
-        alert("Data berhasil dihapus")
-        onDelete()
-      } else {
-        const err = await response.json()
-        alert(err.error || "Gagal menghapus data")
-      }
-    } catch (error) {
-      console.error("Delete error:", error)
-      alert("Terjadi kesalahan saat menghapus data")
+    
+    const localId = p.local_id || p.id
+    if (localId) {
+      onDelete(localId)
     }
   }
 
@@ -102,41 +109,54 @@ export default function PendudukTable({
                 </td>
               </tr>
             ) : (
-              paginatedData.map((p) => (
-                <tr key={p._id} className="hover:bg-surface transition">
-                  <td className="px-6 py-3 text-sm font-mono">{p.nik}</td>
-                  <td className="px-6 py-3 text-sm">{p.nama}</td>
-                  <td className="px-6 py-3 text-sm">
-                    {p.tanggal_lahir
-                      ? new Date(p.tanggal_lahir).toLocaleDateString("id-ID")
-                      : "-"}
-                  </td>
-                  <td className="px-6 py-3 text-sm">{p.jenis_kelamin || "-"}</td>
-                  <td className="px-6 py-3 text-sm">
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${getSyncFlagColor(
-                        p.sync_flag
-                      )}`}
-                    >
-                      {p.sync_flag}
-                    </span>
-                  </td>
-                  <td className="px-6 py-3 text-sm space-x-2">
-                    <button
-                      onClick={() => onEdit(p._id)}
-                      className="bg-primary text-white px-3 py-1 rounded hover:bg-primary-dark transition text-xs font-medium"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDelete(p._id)}
-                      className="bg-danger text-white px-3 py-1 rounded hover:bg-red-600 transition text-xs font-medium"
-                    >
-                      Hapus
-                    </button>
-                  </td>
-                </tr>
-              ))
+              paginatedData.map((p) => {
+                const uniqueKey = p.local_id || p.id || p._id || p.server_id || p.nik
+                const editId = p.local_id || p.id || 0
+                
+                return (
+                  <tr key={uniqueKey} className={`hover:bg-surface transition ${!p.is_synced ? "bg-yellow-50/50" : ""}`}>
+                    <td className="px-6 py-3 text-sm font-mono">{p.nik}</td>
+                    <td className="px-6 py-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        {p.nama}
+                        {!p.is_synced && (
+                          <span className="text-xs text-yellow-600">(lokal)</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-3 text-sm">
+                      {p.tanggal_lahir
+                        ? new Date(p.tanggal_lahir).toLocaleDateString("id-ID")
+                        : "-"}
+                    </td>
+                    <td className="px-6 py-3 text-sm">{p.jenis_kelamin || "-"}</td>
+                    <td className="px-6 py-3 text-sm">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${getSyncFlagColor(
+                          p.sync_flag,
+                          p.is_synced
+                        )}`}
+                      >
+                        {getSyncLabel(p.sync_flag, p.is_synced)}
+                      </span>
+                    </td>
+                    <td className="px-6 py-3 text-sm space-x-2">
+                      <button
+                        onClick={() => onEdit(editId)}
+                        className="bg-primary text-white px-3 py-1 rounded hover:bg-primary-dark transition text-xs font-medium"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(p)}
+                        className="bg-danger text-white px-3 py-1 rounded hover:bg-red-600 transition text-xs font-medium"
+                      >
+                        Hapus
+                      </button>
+                    </td>
+                  </tr>
+                )
+              })
             )}
           </tbody>
         </table>

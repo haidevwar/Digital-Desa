@@ -1,17 +1,140 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
+import { 
+  saveAuthLocal, 
+  getAuthLocal, 
+  isTokenValid,
+  type LocalAuthData 
+} from "@/lib/local-db"
+
+// Simple hash function for offline password verification
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder()
+  const data = encoder.encode(password)
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  return hashArray.map(b => b.toString(16).padStart(2, "0")).join("")
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [isOnline, setIsOnline] = useState(true)
+  const [offlineLoginAvailable, setOfflineLoginAvailable] = useState(false)
   const router = useRouter()
+
+  // Check online status and cached credentials
+  useEffect(() => {
+    const checkStatus = async () => {
+      setIsOnline(navigator.onLine)
+      
+      // Check if we have valid cached credentials
+      const tokenValid = await isTokenValid()
+      const cachedAuth = await getAuthLocal()
+      setOfflineLoginAvailable(tokenValid && !!cachedAuth?.passwordHash)
+    }
+    
+    checkStatus()
+    
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+    
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [])
+
+  // Auto-redirect if already logged in with valid token
+  useEffect(() => {
+    const checkExistingSession = async () => {
+      const tokenValid = await isTokenValid()
+      if (tokenValid) {
+        router.push("/app/dashboard")
+      }
+    }
+    checkExistingSession()
+  }, [router])
+
+  const handleOnlineLogin = async () => {
+    const response = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+      credentials: "include",
+    })
+
+    const data = await response.json()
+
+    if (response.ok && data.success) {
+      // Hash password for offline verification
+      const passwordHash = await hashPassword(password)
+      
+      // Calculate token expiry (7 days from now)
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      
+      // Save auth data to IndexedDB for offline use
+      const authData: LocalAuthData = {
+        id: "current_user",
+        token: data.token || "",
+        user: data.user,
+        loginTime: new Date().toISOString(),
+        expiresAt,
+        passwordHash,
+      }
+      
+      await saveAuthLocal(authData)
+      localStorage.setItem("user", JSON.stringify(data.user))
+      
+      return { success: true }
+    } else {
+      return { success: false, error: data.error || "Login gagal" }
+    }
+  }
+
+  const handleOfflineLogin = async () => {
+    const cachedAuth = await getAuthLocal()
+    
+    if (!cachedAuth) {
+      return { success: false, error: "Tidak ada data login tersimpan. Silakan login online terlebih dahulu." }
+    }
+    
+    // Verify email matches
+    if (cachedAuth.user.email !== email) {
+      return { success: false, error: "Email tidak cocok dengan akun tersimpan" }
+    }
+    
+    // Verify password hash
+    const inputHash = await hashPassword(password)
+    if (inputHash !== cachedAuth.passwordHash) {
+      return { success: false, error: "Password salah" }
+    }
+    
+    // Check if token is still valid
+    const tokenValid = await isTokenValid()
+    if (!tokenValid) {
+      return { success: false, error: "Sesi telah kedaluwarsa. Silakan login online." }
+    }
+    
+    // Update login time
+    await saveAuthLocal({
+      ...cachedAuth,
+      loginTime: new Date().toISOString(),
+    })
+    
+    localStorage.setItem("user", JSON.stringify(cachedAuth.user))
+    
+    return { success: true }
+  }
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -19,37 +142,36 @@ export default function LoginPage() {
     setError("")
 
     try {
-      console.log("[v0] Starting login with email:", email)
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-        credentials: "include",
-      })
-
-      console.log("[v0] Login response status:", response.status)
-      const data = await response.json()
-      console.log("[v0] Login response data:", data)
-
-      if (response.ok && data.success) {
-        console.log("[v0] Login successful, token:", data.token ? "received" : "missing")
-        if (data.token) {
-          setToken(data.token)
-          console.log("[v0] Token saved to localStorage")
-          localStorage.setItem("user", JSON.stringify(data.user))
-          console.log("[v0] User data saved, redirecting to dashboard")
-        }
-
-        // Redirect to dashboard
-        setTimeout(() => {
-          router.push("/app/dashboard")
-        }, 500)
+      let result: { success: boolean; error?: string }
+      
+      if (isOnline) {
+        result = await handleOnlineLogin()
       } else {
-        console.log("[v0] Login failed:", data.error)
-        setError(data.error || "Login gagal")
+        result = await handleOfflineLogin()
+      }
+      
+      if (result.success) {
+        router.push("/app/dashboard")
+      } else {
+        setError(result.error || "Login gagal")
       }
     } catch (err) {
-      console.error("[v0] Login error:", err)
+      console.error("Login error:", err)
+      
+      // If online login fails due to network, try offline
+      if (isOnline && offlineLoginAvailable) {
+        try {
+          const offlineResult = await handleOfflineLogin()
+          if (offlineResult.success) {
+            setError("")
+            router.push("/app/dashboard")
+            return
+          }
+        } catch {
+          // Ignore offline fallback errors
+        }
+      }
+      
       setError("Terjadi kesalahan saat login")
     } finally {
       setLoading(false)
@@ -63,6 +185,28 @@ export default function LoginPage() {
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-primary mb-2">Digital Desa</h1>
             <p className="text-text-secondary">Sistem Manajemen Data Desa</p>
+            
+            {/* Online/Offline Status Indicator */}
+            <div className={`mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
+              isOnline 
+                ? "bg-green-100 text-green-700" 
+                : "bg-yellow-100 text-yellow-700"
+            }`}>
+              <div className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-yellow-500"}`} />
+              {isOnline ? "Online" : "Offline Mode"}
+            </div>
+            
+            {!isOnline && offlineLoginAvailable && (
+              <p className="mt-2 text-xs text-green-600">
+                Login offline tersedia dengan kredensial tersimpan
+              </p>
+            )}
+            
+            {!isOnline && !offlineLoginAvailable && (
+              <p className="mt-2 text-xs text-yellow-600">
+                Tidak ada sesi tersimpan. Silakan hubungkan ke internet.
+              </p>
+            )}
           </div>
 
           {error && (

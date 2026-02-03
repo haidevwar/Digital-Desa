@@ -17,7 +17,16 @@ interface SyncConflict {
 export async function POST(request: NextRequest) {
   try {
     // ================= AUTH =================
-    const token = cookies().get("token")?.value
+    const cookieStore = await cookies()
+    let token = cookieStore.get("token")?.value
+
+    // Also check Authorization header for offline sync
+    if (!token) {
+      const authHeader = request.headers.get("authorization")
+      if (authHeader?.startsWith("Bearer ")) {
+        token = authHeader.substring(7)
+      }
+    }
 
     if (!token) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
@@ -26,7 +35,7 @@ export async function POST(request: NextRequest) {
     const decoded = verifyToken(token)
 
     if (!decoded) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
+      return NextResponse.json({ error: "Token invalid atau expired" }, { status: 401 })
     }
 
     // ================= BODY =================
@@ -80,7 +89,7 @@ export async function POST(request: NextRequest) {
           if (existingNik) {
             results.conflicts++
             conflictDetails.push({
-              recordId: String(data._id || ""),
+              recordId: String(data._id || data.local_id || ""),
               table: "penduduk",
               localHash: computedHash,
               remoteHash: "DUPLICATE_NIK",
@@ -90,8 +99,11 @@ export async function POST(request: NextRequest) {
             continue
           }
 
-          await pendudukCollection.insertOne({
-            ...data,
+          // Remove local-only fields before inserting
+          const { local_id, sync_flag: localSyncFlag, is_synced: localIsSynced, ...serverData } = data
+
+          const insertResult = await pendudukCollection.insertOne({
+            ...serverData,
             data_hash: computedHash,
             sync_flag: "SYNCED",
             is_synced: true,
@@ -101,6 +113,11 @@ export async function POST(request: NextRequest) {
           })
 
           results.successful++
+          
+          // Store inserted ID for client to update local record
+          if (!conflictDetails.find(c => c.action === "CREATE")) {
+            (results as any).insertedId = insertResult.insertedId.toString()
+          }
         }
 
         // ================= UPDATE =================
