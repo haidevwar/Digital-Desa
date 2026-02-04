@@ -39,16 +39,17 @@ export async function POST(request: NextRequest) {
 
     const response = NextResponse.json({
       success: true,
+      token, // Include token in response for IndexedDB storage
       user: {
         _id: user._id,
-        nama_lengkap: user.nama_lengkap,
+        nama_lengkap: user.namaLengkap || user.nama_lengkap,
         email: user.email,
         role: user.role,
       },
     })
 
     response.cookies.set("token", token, {
-      httpOnly: true,
+      httpOnly: false, // Allow JS access for offline sync
       secure: process.env.NODE_ENV === "production",
       sameSite: "lax",
       maxAge: 60 * 60 * 24 * 7,

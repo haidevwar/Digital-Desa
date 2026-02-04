@@ -2,13 +2,20 @@
 
 import type React from "react"
 import { useEffect, useState } from "react"
+import { 
+  addPendudukLocal, 
+  updatePendudukLocal, 
+  getPendudukByLocalId,
+  type LocalPenduduk 
+} from "@/lib/local-db"
 
 interface Props {
   editingId: number | null
   onClose: () => void
+  isOfflineMode?: boolean
 }
 
-export default function PendudukForm({ editingId, onClose }: Props) {
+export default function PendudukForm({ editingId, onClose, isOfflineMode = false }: Props) {
   const [formData, setFormData] = useState({
     nik: "",
     nama: "",
@@ -22,6 +29,23 @@ export default function PendudukForm({ editingId, onClose }: Props) {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [isOnline, setIsOnline] = useState(true)
+
+  // Check online status
+  useEffect(() => {
+    setIsOnline(navigator.onLine)
+    
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    
+    window.addEventListener("online", handleOnline)
+    window.addEventListener("offline", handleOffline)
+    
+    return () => {
+      window.removeEventListener("online", handleOnline)
+      window.removeEventListener("offline", handleOffline)
+    }
+  }, [])
 
   // ================= FETCH DATA SAAT EDIT =================
   useEffect(() => {
@@ -29,30 +53,52 @@ export default function PendudukForm({ editingId, onClose }: Props) {
 
     const fetchData = async () => {
       try {
-        const response = await fetch(`/api/penduduk/${editingId}`, {
-          method: "GET",
-          credentials: "include", // penting
-        })
-
-        if (!response.ok) {
-          const err = await response.json()
-          setError(err.error || "Gagal mengambil data")
+        // First try to get from IndexedDB
+        const localData = await getPendudukByLocalId(editingId)
+        
+        if (localData) {
+          setFormData({
+            nik: localData.nik || "",
+            nama: localData.nama || "",
+            tanggal_lahir: localData.tanggal_lahir?.split("T")[0] || "",
+            keluarga_id: localData.keluarga_id?.toString() || "1",
+            jenis_kelamin: localData.jenis_kelamin || "Laki-laki",
+            agama: localData.agama || "Islam",
+            status_kawin: localData.status_kawin || "Belum Kawin",
+            pekerjaan: localData.pekerjaan || "",
+          })
           return
         }
-
-        const data = await response.json()
-
-        if (data.success) {
-          setFormData({
-            nik: data.data.nik || "",
-            nama: data.data.nama || "",
-            tanggal_lahir: data.data.tanggal_lahir?.split("T")[0] || "",
-            keluarga_id: data.data.keluarga_id?.toString() || "1",
-            jenis_kelamin: data.data.jenis_kelamin || "Laki-laki",
-            agama: data.data.agama || "Islam",
-            status_kawin: data.data.status_kawin || "Belum Kawin",
-            pekerjaan: data.data.pekerjaan || "",
+        
+        // If online and not found locally, try server
+        if (isOnline && !isOfflineMode) {
+          const response = await fetch(`/api/penduduk/${editingId}`, {
+            method: "GET",
+            credentials: "include",
           })
+
+          if (!response.ok) {
+            const err = await response.json()
+            setError(err.error || "Gagal mengambil data")
+            return
+          }
+
+          const data = await response.json()
+
+          if (data.success) {
+            setFormData({
+              nik: data.data.nik || "",
+              nama: data.data.nama || "",
+              tanggal_lahir: data.data.tanggal_lahir?.split("T")[0] || "",
+              keluarga_id: data.data.keluarga_id?.toString() || "1",
+              jenis_kelamin: data.data.jenis_kelamin || "Laki-laki",
+              agama: data.data.agama || "Islam",
+              status_kawin: data.data.status_kawin || "Belum Kawin",
+              pekerjaan: data.data.pekerjaan || "",
+            })
+          }
+        } else {
+          setError("Data tidak ditemukan di penyimpanan lokal")
         }
       } catch (err) {
         setError("Terjadi kesalahan saat mengambil data")
@@ -60,7 +106,7 @@ export default function PendudukForm({ editingId, onClose }: Props) {
     }
 
     fetchData()
-  }, [editingId])
+  }, [editingId, isOnline, isOfflineMode])
 
   // ================= HANDLE CHANGE =================
   const handleChange = (
@@ -70,6 +116,41 @@ export default function PendudukForm({ editingId, onClose }: Props) {
     setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
+  // ================= SAVE TO INDEXEDDB (OFFLINE) =================
+  const saveToIndexedDB = async () => {
+    if (editingId) {
+      await updatePendudukLocal(editingId, formData)
+    } else {
+      await addPendudukLocal(formData)
+    }
+  }
+
+  // ================= SAVE TO SERVER (ONLINE) =================
+  const saveToServer = async () => {
+    const url = editingId
+      ? `/api/penduduk/${editingId}`
+      : "/api/penduduk"
+
+    const method = editingId ? "PUT" : "POST"
+
+    const response = await fetch(url, {
+      method,
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(formData),
+    })
+
+    const result = await response.json()
+
+    if (!response.ok) {
+      throw new Error(result.error || "Gagal menyimpan data")
+    }
+
+    return result
+  }
+
   // ================= HANDLE SUBMIT =================
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -77,37 +158,39 @@ export default function PendudukForm({ editingId, onClose }: Props) {
     setError("")
 
     try {
-      const url = editingId
-        ? `/api/penduduk/${editingId}`
-        : "/api/penduduk"
-
-      const method = editingId ? "PUT" : "POST"
-
-      const response = await fetch(url, {
-        method,
-        credentials: "include", // penting
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
-      })
-
-      const result = await response.json()
-
-      if (!response.ok) {
-        setError(result.error || "Gagal menyimpan data")
+      // Validate NIK
+      if (formData.nik.length !== 16) {
+        setError("NIK harus 16 digit")
+        setLoading(false)
         return
       }
 
-      alert(
-        editingId
-          ? "Data berhasil diperbarui"
-          : "Data berhasil ditambahkan"
-      )
+      // Always save to IndexedDB first (offline-first approach)
+      await saveToIndexedDB()
+      
+      // If online, also try to save to server
+      if (isOnline && !isOfflineMode) {
+        try {
+          await saveToServer()
+        } catch (serverError) {
+          // Server save failed but local save succeeded
+          console.warn("Server save failed, data saved locally:", serverError)
+        }
+      }
 
+      const message = editingId
+        ? "Data berhasil diperbarui"
+        : "Data berhasil ditambahkan"
+      
+      const offlineNote = !isOnline || isOfflineMode
+        ? " (tersimpan lokal, akan disinkronkan saat online)"
+        : ""
+
+      alert(message + offlineNote)
       onClose()
     } catch (error) {
-      setError("Terjadi kesalahan saat menyimpan data")
+      console.error("Save error:", error)
+      setError(error instanceof Error ? error.message : "Terjadi kesalahan saat menyimpan data")
     } finally {
       setLoading(false)
     }

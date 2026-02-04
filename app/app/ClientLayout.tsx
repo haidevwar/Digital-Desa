@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import Link from "next/link"
 import { useServiceWorker } from "@/hooks/use-service-worker"
@@ -9,6 +9,7 @@ import { useOfflineSync } from "@/hooks/use-offline-sync"
 import { useSyncNotifications } from "@/hooks/use-sync-notifications"
 import ConnectivityIndicator from "@/components/connectivity-indicator"
 import SyncToast from "@/components/sync-toast"
+import { getAuthLocal, isTokenValid, clearAuthLocal } from "@/lib/local-db"
 
 export default function ClientLayout({
   children,
@@ -25,36 +26,89 @@ export default function ClientLayout({
 
   const { isOnline, pendingChanges, syncing } = useOfflineSync()
 
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const res = await fetch("/api/auth/me", {
-          credentials: "include",
-        })
-
-        if (!res.ok) {
-          router.push("/login")
-          return
-        }
-
-        const data = await res.json()
-        setUser(data.user)
-      } catch (error) {
-        router.push("/login")
-      } finally {
+  // Offline-capable user fetch
+  const fetchUser = useCallback(async () => {
+    try {
+      console.log("[v0] fetchUser called")
+      
+      // First check IndexedDB for cached auth (faster)
+      const cachedAuth = await getAuthLocal()
+      const tokenValid = await isTokenValid()
+      
+      console.log("[v0] Cached auth:", cachedAuth ? "found" : "not found")
+      console.log("[v0] Token valid:", tokenValid)
+      
+      if (tokenValid && cachedAuth) {
+        console.log("[v0] Using cached auth, user:", cachedAuth.user)
+        setUser(cachedAuth.user)
         setLoading(false)
+        
+        // If online, verify with server in background (don't redirect on failure)
+        if (navigator.onLine) {
+          fetch("/api/auth/me", { credentials: "include" })
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+              if (data?.user) {
+                console.log("[v0] Server verified, updating user:", data.user)
+                setUser(data.user)
+              }
+            })
+            .catch(() => {
+              console.log("[v0] Server verification failed, keeping cached data")
+            })
+        }
+        return
       }
-    }
+      
+      // No cached auth, try server if online
+      if (navigator.onLine) {
+        console.log("[v0] No cached auth, trying server...")
+        try {
+          const res = await fetch("/api/auth/me", {
+            credentials: "include",
+          })
 
-    fetchUser()
+          console.log("[v0] Server response status:", res.status)
+          
+          if (res.ok) {
+            const data = await res.json()
+            console.log("[v0] Server returned user:", data.user)
+            setUser(data.user)
+            setLoading(false)
+            return
+          }
+        } catch (err) {
+          console.log("[v0] Network error:", err)
+        }
+      }
+      
+      // No valid session - redirect to login
+      console.log("[v0] No valid session, redirecting to login")
+      setLoading(false)
+      router.replace("/login")
+    } catch (error) {
+      console.error("[v0] Auth check error:", error)
+      setLoading(false)
+      router.replace("/login")
+    }
   }, [router])
+
+  useEffect(() => {
+    fetchUser()
+  }, [fetchUser])
 
   const handleLogout = async () => {
     try {
-      await fetch("/api/auth/logout", {
-        method: "POST",
-        credentials: "include",
-      })
+      // Clear IndexedDB auth data
+      await clearAuthLocal()
+      localStorage.removeItem("user")
+      
+      if (navigator.onLine) {
+        await fetch("/api/auth/logout", {
+          method: "POST",
+          credentials: "include",
+        })
+      }
     } catch (error) {
       console.error("Logout error:", error)
     } finally {
@@ -144,7 +198,7 @@ export default function ClientLayout({
           <div className="text-sm">
             <p className="text-neutral-400">User</p>
             <p className="text-white font-medium">
-              {user?.namaLengkap || "User"}
+              {user?.nama_lengkap || user?.namaLengkap || "User"}
             </p>
             <p className="text-xs text-neutral-400">
               {user?.role}
