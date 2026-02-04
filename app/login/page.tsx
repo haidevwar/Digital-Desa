@@ -4,11 +4,11 @@ import type React from "react"
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import { 
-  saveAuthLocal, 
-  getAuthLocal, 
+import {
+  saveAuthLocal,
+  getAuthLocal,
   isTokenValid,
-  type LocalAuthData 
+  type LocalAuthData
 } from "@/lib/local-db"
 
 // Simple hash function for offline password verification
@@ -33,21 +33,21 @@ export default function LoginPage() {
   useEffect(() => {
     const checkStatus = async () => {
       setIsOnline(navigator.onLine)
-      
+
       // Check if we have valid cached credentials
       const tokenValid = await isTokenValid()
       const cachedAuth = await getAuthLocal()
       setOfflineLoginAvailable(tokenValid && !!cachedAuth?.passwordHash)
     }
-    
+
     checkStatus()
-    
+
     const handleOnline = () => setIsOnline(true)
     const handleOffline = () => setIsOnline(false)
-    
+
     window.addEventListener("online", handleOnline)
     window.addEventListener("offline", handleOffline)
-    
+
     return () => {
       window.removeEventListener("online", handleOnline)
       window.removeEventListener("offline", handleOffline)
@@ -70,10 +70,10 @@ export default function LoginPage() {
     if (response.ok && data.success) {
       // Hash password for offline verification
       const passwordHash = await hashPassword(password)
-      
+
       // Calculate token expiry (7 days from now)
       const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
-      
+
       // Save auth data to IndexedDB for offline use
       const authData: LocalAuthData = {
         id: "current_user",
@@ -83,10 +83,10 @@ export default function LoginPage() {
         expiresAt,
         passwordHash,
       }
-      
+
       await saveAuthLocal(authData)
       localStorage.setItem("user", JSON.stringify(data.user))
-      
+
       return { success: true }
     } else {
       return { success: false, error: data.error || "Login gagal" }
@@ -95,36 +95,36 @@ export default function LoginPage() {
 
   const handleOfflineLogin = async () => {
     const cachedAuth = await getAuthLocal()
-    
+
     if (!cachedAuth) {
       return { success: false, error: "Tidak ada data login tersimpan. Silakan login online terlebih dahulu." }
     }
-    
+
     // Verify email matches
     if (cachedAuth.user.email !== email) {
       return { success: false, error: "Email tidak cocok dengan akun tersimpan" }
     }
-    
+
     // Verify password hash
     const inputHash = await hashPassword(password)
     if (inputHash !== cachedAuth.passwordHash) {
       return { success: false, error: "Password salah" }
     }
-    
+
     // Check if token is still valid
     const tokenValid = await isTokenValid()
     if (!tokenValid) {
       return { success: false, error: "Sesi telah kedaluwarsa. Silakan login online." }
     }
-    
+
     // Update login time
     await saveAuthLocal({
       ...cachedAuth,
       loginTime: new Date().toISOString(),
     })
-    
+
     localStorage.setItem("user", JSON.stringify(cachedAuth.user))
-    
+
     return { success: true }
   }
 
@@ -135,13 +135,13 @@ export default function LoginPage() {
 
     try {
       let result: { success: boolean; error?: string }
-      
+
       if (isOnline) {
         result = await handleOnlineLogin()
       } else {
         result = await handleOfflineLogin()
       }
-      
+
       if (result.success) {
         router.push("/app/dashboard")
       } else {
@@ -149,7 +149,7 @@ export default function LoginPage() {
       }
     } catch (err) {
       console.error("Login error:", err)
-      
+
       // If online login fails due to network, try offline
       if (isOnline && offlineLoginAvailable) {
         try {
@@ -163,7 +163,7 @@ export default function LoginPage() {
           // Ignore offline fallback errors
         }
       }
-      
+
       setError("Terjadi kesalahan saat login")
     } finally {
       setLoading(false)
@@ -177,23 +177,22 @@ export default function LoginPage() {
           <div className="text-center mb-8">
             <h1 className="text-3xl font-bold text-primary mb-2">Digital Desa</h1>
             <p className="text-text-secondary">Sistem Manajemen Data Desa</p>
-            
+
             {/* Online/Offline Status Indicator */}
-            <div className={`mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${
-              isOnline 
-                ? "bg-green-100 text-green-700" 
+            <div className={`mt-4 inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm ${isOnline
+                ? "bg-green-100 text-green-700"
                 : "bg-yellow-100 text-yellow-700"
-            }`}>
+              }`}>
               <div className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-yellow-500"}`} />
               {isOnline ? "Online" : "Offline Mode"}
             </div>
-            
+
             {!isOnline && offlineLoginAvailable && (
               <p className="mt-2 text-xs text-green-600">
                 Login offline tersedia dengan kredensial tersimpan
               </p>
             )}
-            
+
             {!isOnline && !offlineLoginAvailable && (
               <p className="mt-2 text-xs text-yellow-600">
                 Tidak ada sesi tersimpan. Silakan hubungkan ke internet.
@@ -252,47 +251,6 @@ export default function LoginPage() {
             <Link href="/register" className="text-primary font-medium hover:text-primary-dark">
               Daftar di sini
             </Link>
-          </div>
-
-          <div className="mt-8 p-4 bg-surface rounded-lg border border-border">
-            <p className="text-xs text-text-secondary mb-2 font-medium">Demo Credentials:</p>
-            <div className="space-y-2">
-              <div>
-                <p className="text-xs font-medium text-text">Admin Account:</p>
-                <p className="text-xs text-text-secondary">Email: admin@desa.id</p>
-                <p className="text-xs text-text-secondary">Password: admin123</p>
-              </div>
-              <div className="pt-2 border-t border-border">
-                <p className="text-xs font-medium text-text">Petugas Account:</p>
-                <p className="text-xs text-text-secondary">Email: petugas@desa.id</p>
-                <p className="text-xs text-text-secondary">Password: admin123</p>
-              </div>
-              <div className="pt-2 border-t border-border">
-                <p className="text-xs font-medium text-text">Warga Account:</p>
-                <p className="text-xs text-text-secondary">Email: warga@desa.id</p>
-                <p className="text-xs text-text-secondary">Password: admin123</p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  // Force recreate to fix any field name issues
-                  const res = await fetch("/api/seed?force=true")
-                  const data = await res.json()
-                  if (data.success) {
-                    alert("Demo users berhasil dibuat! Silakan login dengan kredensial di atas.")
-                  } else {
-                    alert("Error: " + (data.error || "Gagal membuat demo users"))
-                  }
-                } catch (err) {
-                  alert("Error: Gagal terhubung ke server. Pastikan MONGODB_URI dan MONGODB_DB sudah diatur dengan benar.")
-                }
-              }}
-              className="mt-3 w-full text-xs bg-blue-100 text-blue-700 py-2 rounded hover:bg-blue-200 transition"
-            >
-              Buat/Reset Demo Users
-            </button>
           </div>
         </div>
       </div>
